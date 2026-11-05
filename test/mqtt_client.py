@@ -1,27 +1,24 @@
 # MQTT publisher for the urcast weather node.
 #
-# Every message is published to urcast/<node_id>/<kind> and carries the owner's
-# JWT in the "token" field. The backend drops anything with a missing, expired,
-# or wrong token, so keep NODE_TOKEN in sync with the account that registered
-# this node.
+# Every message is published to <prefix>/<node_id>/<kind> and carries the
+# owner's JWT in the "token" field. The backend drops anything with a missing,
+# expired, or wrong token, so the token comes from the shared .env file.
 #
-# Edit the settings below:
-#   NODE_ID     -- the id printed by register_node.py
-#   NODE_TOKEN  -- the JWT from /api/auth/login (it expires after 24 hours)
-#   MQTT_BROKER -- the machine running the urcast API and Mosquitto
+# All settings live in the repository-level .env file:
+#   MQTT_BROKER, MQTT_PORT, MQTT_TOPIC_PREFIX
+#   NODE_ID     -- written by setup_node.py after registration
+#   JWT_TOKEN   -- written by setup_node.py after login
 
 import json
 import time
 
 import paho.mqtt.client as mqtt
 
-MQTT_BROKER = "localhost"
-MQTT_PORT = 1883
-NODE_ID = 1
-NODE_TOKEN = "paste-your-jwt-token-here"
+import config
 
 _STARTED_AT = time.monotonic()
 _client = None
+_connection = None
 
 
 def _new_client():
@@ -33,7 +30,7 @@ def _new_client():
 
 
 def _drop_client():
-    global _client
+    global _client, _connection
     if _client is not None:
         try:
             _client.loop_stop()
@@ -41,27 +38,57 @@ def _drop_client():
         except Exception:
             pass
         _client = None
+    _connection = None
 
 
-def _get_client():
-    global _client
-    if _client is not None and _client.is_connected():
+def _get_client(broker, port):
+    global _client, _connection
+    if (
+        _client is not None
+        and _client.is_connected()
+        and _connection == (broker, port)
+    ):
         return _client
 
     _drop_client()
     _client = _new_client()
-    _client.connect(MQTT_BROKER, MQTT_PORT)
+    _client.connect(broker, port)
     _client.loop_start()
+    _connection = (broker, port)
     return _client
 
 
 def _publish(kind, fields):
+    broker = config.get("MQTT_BROKER", "localhost")
+    port = config.get_int("MQTT_PORT", 1883)
+    prefix = config.get("MQTT_TOPIC_PREFIX", "urcast")
+    node_id = config.get("NODE_ID")
+    token = config.get("JWT_TOKEN", "")
+
+    if not node_id:
+        print(
+            f"could not send {kind}: NODE_ID is not configured; "
+            "run setup_node.py first"
+        )
+        return False
+    try:
+        node_id = int(node_id)
+    except (TypeError, ValueError):
+        print(f"could not send {kind}: NODE_ID must be a number, got {node_id!r}")
+        return False
+    if not token:
+        print(
+            f"could not send {kind}: JWT_TOKEN is not configured; "
+            "run setup_node.py first"
+        )
+        return False
+
     payload = dict(fields)
-    payload["token"] = NODE_TOKEN
-    topic = f"urcast/{NODE_ID}/{kind}"
+    payload["token"] = token
+    topic = f"{prefix}/{node_id}/{kind}"
 
     try:
-        client = _get_client()
+        client = _get_client(broker, port)
         result = client.publish(topic, json.dumps(payload))
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             raise RuntimeError(f"publish returned code {result.rc}")

@@ -69,24 +69,43 @@ import adafruit_tsl2591
 import board
 import busio
 
+import config
 import mqtt_client
 
-DHT_PIN = board.D4
-BMP_SDA_PIN = board.D17  # Physical Pin 11
-BMP_SCL_PIN = board.D27  # Physical Pin 13
-BMP280_ADDRESS = 0x76
-READ_INTERVAL_S = 3.0
 CELL_WIDTH = 24  # column width for the per-sensor printout
 
-TSL_GAIN = adafruit_tsl2591.GAIN_LOW
-TSL_INTEGRATION_TIME = adafruit_tsl2591.INTEGRATIONTIME_100MS
-
-_GAIN_MULTIPLIERS = {
-    adafruit_tsl2591.GAIN_LOW: 1,
-    adafruit_tsl2591.GAIN_MED: 25,
-    adafruit_tsl2591.GAIN_HIGH: 428,
-    adafruit_tsl2591.GAIN_MAX: 9876,
+_GAIN_OPTIONS = {
+    "low": adafruit_tsl2591.GAIN_LOW,
+    "medium": adafruit_tsl2591.GAIN_MED,
+    "med": adafruit_tsl2591.GAIN_MED,
+    "high": adafruit_tsl2591.GAIN_HIGH,
+    "max": adafruit_tsl2591.GAIN_MAX,
 }
+
+_INTEGRATION_OPTIONS = {
+    "100ms": adafruit_tsl2591.INTEGRATIONTIME_100MS,
+    "200ms": adafruit_tsl2591.INTEGRATIONTIME_200MS,
+    "300ms": adafruit_tsl2591.INTEGRATIONTIME_300MS,
+    "400ms": adafruit_tsl2591.INTEGRATIONTIME_400MS,
+    "500ms": adafruit_tsl2591.INTEGRATIONTIME_500MS,
+    "600ms": adafruit_tsl2591.INTEGRATIONTIME_600MS,
+}
+
+
+def _board_pin(key, default):
+    name = str(config.get(key, default)).strip().upper()
+    pin = getattr(board, name, None)
+    if pin is None:
+        raise ValueError(f"{key}={name!r} is not a valid board pin")
+    return pin
+
+
+def _tsl_option(key, default, options):
+    value = str(config.get(key, default)).strip().lower()
+    if value not in options:
+        choices = ", ".join(options)
+        raise ValueError(f"{key}={value!r} is invalid; choose one of: {choices}")
+    return options[value]
 
 
 def init_sensors():
@@ -96,8 +115,10 @@ def init_sensors():
     try:
         i2c_hw = busio.I2C(board.SCL, board.SDA)
         tsl = adafruit_tsl2591.TSL2591(i2c_hw)
-        tsl.gain = TSL_GAIN
-        tsl.integration_time = TSL_INTEGRATION_TIME
+        tsl.gain = _tsl_option("TSL_GAIN", "low", _GAIN_OPTIONS)
+        tsl.integration_time = _tsl_option(
+            "TSL_INTEGRATION_TIME", "100ms", _INTEGRATION_OPTIONS
+        )
     except Exception as e:
         print(f"TSL2591 init failed: {e}")
 
@@ -105,15 +126,20 @@ def init_sensors():
     i2c_sw = None
     bmp = None
     try:
-        i2c_sw = bitbangio.I2C(BMP_SCL_PIN, BMP_SDA_PIN)
-        bmp = adafruit_bmp280.Adafruit_BMP280_I2C(i2c_sw, address=BMP280_ADDRESS)
+        i2c_sw = bitbangio.I2C(
+            _board_pin("BMP_SCL_PIN", "D27"),
+            _board_pin("BMP_SDA_PIN", "D17"),
+        )
+        bmp = adafruit_bmp280.Adafruit_BMP280_I2C(
+            i2c_sw, address=config.get_int("BMP280_ADDRESS", 0x76)
+        )
     except Exception as e:
         print(f"BMP280 init failed: {e}")
 
-    # DHT22 on GPIO 4 (Physical Pin 7)
+    # DHT22 on the configured data pin (Physical Pin 7)
     dht = None
     try:
-        dht = adafruit_dht.DHT22(DHT_PIN, use_pulseio=False)
+        dht = adafruit_dht.DHT22(_board_pin("DHT_PIN", "D4"), use_pulseio=False)
     except Exception as e:
         print(f"DHT22 init failed: {e}")
 
@@ -192,6 +218,13 @@ def print_sample(ts, seq, light, air, press):
 
 
 def main():
+    try:
+        read_interval = config.get_float("READ_INTERVAL_S", 3.0)
+    except ValueError as error:
+        raise SystemExit(f"Configuration error: {error}")
+    if read_interval <= 0:
+        raise SystemExit("Configuration error: READ_INTERVAL_S must be greater than zero")
+
     i2c_hw, i2c_sw, tsl, bmp, dht = init_sensors()
 
     print("Press Ctrl+C to stop.\n")
@@ -243,7 +276,7 @@ def main():
                         pressure_ok=press.get("pressure") is not None,
                     )
 
-            time.sleep(READ_INTERVAL_S)
+            time.sleep(read_interval)
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:

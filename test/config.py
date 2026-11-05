@@ -35,6 +35,7 @@ DEFAULTS = {
     "BMP_SDA_PIN": "D17",
     "BMP_SCL_PIN": "D27",
     "BMP280_ADDRESS": "0x76",
+    "BMP_SEA_LEVEL_PRESSURE_HPA": "1013.25",
     "TSL_GAIN": "low",
     "TSL_INTEGRATION_TIME": "100ms",
 }
