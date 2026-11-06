@@ -1,100 +1,95 @@
-# One-time registration for the urcast weather node.
+# Register the node with POST /api/node using the JWT stored in .env.
 #
-# A node can only be created by a logged-in user. This script sends
-# POST /api/node with the owner's JWT in the Authorization header, then prints
-# the node_id returned by the API. Put that id and the same token into
-# mqtt_client.py, then run combinedTest.py normally.
-#
-# The JWT expires 24 hours after login. If the API returns HTTP 401, log in
-# again, paste the new token into NODE_TOKEN, and run this script again.
-#
-# Edit the settings below:
-#   API_URL       -- address of the urcast API
-#   NODE_TOKEN    -- the JWT from /api/auth/login
-#   NODE_NAME     -- a name for this node (1-100 characters)
-#   NODE_LOCATION -- optional human-readable location
-#   NODE_LATITUDE -- optional decimal latitude
-#   NODE_LONGITUDE-- optional decimal longitude
+# setup_node.py is the recommended entry point because it also handles login,
+# registration, token storage and starting the sensor service. This script is
+# kept as a standalone registration step for users who already have a token.
 
-import json
 import sys
-import urllib.error
-import urllib.request
 
-API_URL = "http://localhost:8000"
-NODE_TOKEN = "paste-your-jwt-token-here"
-NODE_NAME = "pi5-outdoor"
-NODE_LOCATION = "Dublin, Ireland"
-NODE_LATITUDE = None
-NODE_LONGITUDE = None
+import api_client
+import config
 
 
-def _error_detail(body):
+def _optional_float(key):
+    raw = config.get(key)
+    if raw is None or str(raw).strip() == "":
+        return None
     try:
-        return json.loads(body).get("detail", body)
-    except json.JSONDecodeError:
-        return body
+        return float(raw)
+    except (TypeError, ValueError):
+        raise SystemExit(f"Configuration error: {key} must be a number, got {raw!r}")
 
 
 def register_node():
-    payload = {"node_name": NODE_NAME, "location_name": NODE_LOCATION}
-    if NODE_LATITUDE is not None:
-        payload["latitude"] = NODE_LATITUDE
-    if NODE_LONGITUDE is not None:
-        payload["longitude"] = NODE_LONGITUDE
+    config.ensure_env()
 
-    request = urllib.request.Request(
-        f"{API_URL.rstrip('/')}/api/node",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {NODE_TOKEN}",
-        },
-        method="POST",
+    token = config.get("JWT_TOKEN")
+    if not token:
+        print("No JWT_TOKEN in .env. Run setup_node.py to log in first.")
+        return None
+
+    node_name = str(config.get("NODE_NAME", "pi5-outdoor")).strip()
+    if not 1 <= len(node_name) <= 100:
+        print("Configuration error: NODE_NAME must be 1-100 characters.")
+        return None
+
+    location_name = str(config.get("NODE_LOCATION", "")).strip()
+    if len(location_name) > 150:
+        print("Configuration error: NODE_LOCATION must be 150 characters or fewer.")
+        return None
+
+    latitude = _optional_float("NODE_LATITUDE")
+    longitude = _optional_float("NODE_LONGITUDE")
+    if latitude is not None and not -90 <= latitude <= 90:
+        print("Configuration error: NODE_LATITUDE must be between -90 and 90.")
+        return None
+    if longitude is not None and not -180 <= longitude <= 180:
+        print("Configuration error: NODE_LONGITUDE must be between -180 and 180.")
+        return None
+
+    existing_id = config.get("NODE_ID")
+    if existing_id:
+        print(f"NODE_ID is already set to {existing_id}; creating another node anyway.")
+
+    try:
+        node = api_client.create_node(
+            token,
+            node_name,
+            location_name or None,
+            latitude,
+            longitude,
+        )
+    except api_client.ApiConnectionError as error:
+        print(f"Could not reach the API: {error}")
+        print("Check API_URL in .env and that the backend is running.")
+        return None
+    except api_client.ApiError as error:
+        if error.status == 401:
+            print("Registration failed: the token is invalid or expired (HTTP 401).")
+            print("Run setup_node.py to log in again and refresh JWT_TOKEN.")
+        elif error.status == 403:
+            print("Registration failed: this account is not allowed to create the node.")
+        else:
+            print(f"Registration failed: {error}")
+        return None
+
+    node_id = node["node_id"]
+    config.save(
+        {
+            "NODE_ID": node_id,
+            "NODE_NAME": node_name,
+            "NODE_LOCATION": location_name,
+            "NODE_LATITUDE": "" if latitude is None else latitude,
+            "NODE_LONGITUDE": "" if longitude is None else longitude,
+        }
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            body = response.read().decode("utf-8")
-            print(f"Node registered (HTTP {response.status}).")
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8")
-        detail = _error_detail(body)
-        if error.code == 401:
-            print("Registration failed: invalid or expired token (HTTP 401).")
-            print(f"API detail: {detail}")
-            print("Log in again and paste the new token into NODE_TOKEN.")
-        elif error.code == 422:
-            print("Registration failed: validation error (HTTP 422).")
-            print(f"API detail: {detail}")
-        else:
-            print(f"Registration failed (HTTP {error.code}).")
-            print(f"API detail: {detail}")
-        return None
-    except urllib.error.URLError as error:
-        print(f"Could not reach the API at {API_URL}: {error.reason}")
-        return None
-
-    try:
-        node = json.loads(body)
-    except json.JSONDecodeError:
-        print("Could not read the API response as JSON.")
-        print(f"API response: {body}")
-        return None
-
-    node_id = node.get("node_id")
-    print(f"node_name: {node.get('node_name', NODE_NAME)}")
-    print(f"node_id:   {node_id}")
-    print()
-    print("Put this node_id into NODE_ID in mqtt_client.py.")
+    print(f"Node registered with id {node_id}.")
+    print(f"Saved NODE_ID={node_id} to {config.ENV_PATH}.")
     return node_id
 
 
 def main():
-    if NODE_TOKEN == "paste-your-jwt-token-here":
-        print("Edit register_node.py and paste your JWT into NODE_TOKEN first.")
-        sys.exit(1)
-
     if register_node() is None:
         sys.exit(1)
 
