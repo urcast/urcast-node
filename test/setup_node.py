@@ -82,7 +82,7 @@ def login():
     email_value = ask_validated("Email", validation.email, default=email_default)
     password_value = ask_validated(
         "Password",
-        lambda value: validation.non_empty(value, "Password"),
+        validation.any_password,
         secret=True,
     )
 

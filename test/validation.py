@@ -66,6 +66,14 @@ def password(value) -> str:
     return text
 
 
+def any_password(value) -> str:
+    """Validate a password used to log in without changing its whitespace."""
+    text = "" if value is None else str(value)
+    if not text:
+        raise ValidationError("Password is required.")
+    return text
+
+
 def node_name(value) -> str:
     text = _text(value)
     if not 1 <= len(text) <= MAX_NODE_NAME_LENGTH:

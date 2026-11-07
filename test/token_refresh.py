@@ -93,7 +93,10 @@ class TokenRefresher:
                     return
                 continue
 
-            if not self._refresh():
+            refreshed = self._refresh()
+            if refreshed is None:
+                return
+            if not refreshed:
                 if self._stop.wait(RETRY_DELAY_S):
                     return
                 continue
@@ -110,10 +113,10 @@ class TokenRefresher:
         saved_password = config.get("AUTH_PASSWORD", "")
         if not saved_email or not saved_password:
             print(
-                "JWT refresh failed: AUTH_EMAIL/AUTH_PASSWORD are missing from "
+                "JWT refresh disabled: AUTH_EMAIL/AUTH_PASSWORD are missing from "
                 ".env; run setup_node.py again."
             )
-            return False
+            return None
 
         try:
             token = api_client.login(saved_email, saved_password)
@@ -121,7 +124,11 @@ class TokenRefresher:
             print(f"JWT refresh failed: {error}")
             return False
 
-        config.save({"JWT_TOKEN": token})
+        try:
+            config.save({"JWT_TOKEN": token})
+        except OSError as error:
+            print(f"JWT refresh failed: could not update .env: {error}")
+            return False
         expiry = token_expiry(token)
         if expiry is None:
             print("JWT refreshed, but the new token has no readable exp claim.")
