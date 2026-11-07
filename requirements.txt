@@ -1,0 +1,12 @@
+# Python packages for the Raspberry Pi weather node.
+#
+# The GPIO/I2C system packages (gpiod, libgpiod2, python3-libgpiod, python3-lgpio)
+# are installed with apt; see README.md.
+
+adafruit-blinka
+adafruit-circuitpython-bitbangio
+adafruit-circuitpython-tsl2591
+adafruit-circuitpython-bmp280
+adafruit-circuitpython-dht
+lgpio
+paho-mqtt
