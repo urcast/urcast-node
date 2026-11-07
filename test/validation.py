@@ -41,7 +41,7 @@ def email(value) -> str:
         raise ValidationError(
             "Enter a valid email address, for example you@example.com."
         )
-    return text.lower()
+    return text
 
 
 def username(value) -> str:
