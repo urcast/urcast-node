@@ -21,6 +21,7 @@ import sys
 
 import api_client
 import config
+import token_refresh
 import validation
 
 DEFAULT_NODE_NAME = "pi5-outdoor"
@@ -331,7 +332,17 @@ def main(argv=None):
             )
             return 0
 
-        start_service()
+        if not config.get("AUTH_EMAIL") or not config.get("AUTH_PASSWORD"):
+            print(
+                "Warning: AUTH_EMAIL/AUTH_PASSWORD are missing from .env; "
+                "the JWT will not refresh automatically."
+            )
+
+        refresher = token_refresh.start_refresher()
+        try:
+            start_service()
+        finally:
+            refresher.stop()
         return 0
     except SetupError as error:
         print(f"\nSetup failed: {error}", file=sys.stderr)
