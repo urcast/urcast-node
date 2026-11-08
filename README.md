@@ -63,16 +63,15 @@ urcast-node/
 ├── .gitignore            # Keeps .env and local Python files out of git
 ├── requirements.txt      # Python dependencies for the node
 │
-├── test/
-│   ├── config.py         # Loads and saves the central .env values
-│   ├── auth_client.py    # Login, registration, auth checks, and JWT refresh
-│   ├── setup_node.py     # Interactive first-run setup and service launcher
-│   ├── register_node.py  # Non-interactive node registration with an existing JWT
-│   ├── mqtt_client.py    # MQTT publisher (readings, diagnostics, heartbeat)
-│   ├── combinedTest.py   # Main sensor loop (also started by setup_node.py)
-│   ├── bmp280.py         # Standalone hardware test script for BMP280
-│   ├── dht22.py          # Standalone hardware test script for DHT22
-│   └── tsl2591.py        # Standalone hardware test script for TSL2591
+├── config.py             # Loads and saves the central .env values
+├── auth_client.py        # Login, registration, auth checks, and JWT refresh
+├── setup_node.py         # Interactive first-run setup and service launcher
+├── register_node.py      # Non-interactive node registration with an existing JWT
+├── mqtt_client.py        # MQTT publisher (readings, diagnostics, heartbeat)
+├── run.py                # Main sensor loop (also started by setup_node.py)
+├── bmp280.py             # Standalone hardware test script for BMP280
+├── dht22.py              # Standalone hardware test script for DHT22
+├── tsl2591.py            # Standalone hardware test script for TSL2591
 │
 └── README.md             # Project documentation
 ```
@@ -103,20 +102,13 @@ You can inspect the complete evolution of the individual sensor scripts and diag
 git clone https://github.com/urcast/urcast-node
 ```
 
-2. Install MQTT Broker and local client tools and start the services. As well as set them to start on boot.
-```bash
-sudo apt install -y mosquitto mosquitto-clients
-sudo systemctl enable --now mosquitto
-sudo systemctl enable mosquitto
-```
-
-3. Create and activate a virtual environment in urcast-node/:
+2. Create and activate a virtual environment in urcast-node/:
 ```bash
 python -m venv venv
 source venv/bin/activate
 ```
 
-4. Install the Python dependencies:
+3. Install the Python dependencies:
 ```bash
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -130,7 +122,7 @@ sudo usermod -aG gpio "$USER"
 ```
 Log out and back in after changing groups.
 
-5. Create the central `.env` from the template:
+4. Create the central `.env` from the template:
 ```bash
 cp .env.example .env
 ```
@@ -146,9 +138,8 @@ Leave `URCAST_NODE_ID`, `URCAST_NODE_TOKEN`, `URCAST_EMAIL`, and `URCAST_PASSWOR
 
 If the node runs on the Pi and the API runs on your laptop, use the laptop's LAN IP, not `localhost`.
 
-6. Run the interactive setup:
+5. Run the interactive setup:
 ```bash
-cd test
 python setup_node.py
 ```
 
@@ -174,15 +165,13 @@ python setup_node.py --setup-only
 The recommended entry point is the setup script, which also starts the service:
 
 ```bash
-cd test
 python setup_node.py
 ```
 
 After `.env` is configured, the sensor loop can also be started directly:
 
 ```bash
-cd test
-python combinedTest.py
+python run.py
 ```
 
 Press `Ctrl+C` at any time to safely terminate the execution loop and release hardware interfaces.
@@ -200,7 +189,7 @@ The node talks to the backend over two transports:
 
 ### Automatic setup (recommended)
 
-Run from `test/`:
+Run from the repository root:
 
 ```bash
 python setup_node.py
@@ -215,7 +204,7 @@ The script:
 5. On registration, validates the username, email, and password, creates the account with `POST /api/user`, then logs in and saves the same values.
 6. Checks `URCAST_NODE_ID`; if it is missing or owned by another account, asks for the node name, location, and optional coordinates, then creates it with `POST /api/node`.
 7. Saves `URCAST_NODE_ID` and the node details to `.env`.
-8. Starts `combinedTest.py`.
+8. Starts `run.py`.
 
 Use `python setup_node.py --setup-only` to stop before step 8.
 
@@ -251,7 +240,6 @@ This requires the API to be reachable around the refresh time and the stored cre
 If you already have a JWT and want to register the node non-interactively, set `URCAST_API_URL`, `URCAST_NODE_TOKEN`, and the `URCAST_NODE_*` fields in `.env`, then run:
 
 ```bash
-cd test
 python register_node.py
 ```
 
@@ -266,7 +254,7 @@ The API endpoints used are:
 
 ### MQTT topics
 
-`combinedTest.py` continues to print samples to the terminal and additionally publishes:
+`run.py` continues to print samples to the terminal and additionally publishes:
 
 | Topic | When | Payload |
 | :--- | :--- | :--- |

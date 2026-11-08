@@ -343,7 +343,7 @@ def _ensure_node(user):
 
 
 def _start_service():
-    script = Path(__file__).resolve().with_name("combinedTest.py")
+    script = Path(__file__).resolve().with_name("run.py")
     print("Starting the sensor service. Press Ctrl+C to stop.")
     try:
         result = subprocess.run(
@@ -365,7 +365,7 @@ def main(setup_only=False):
     _ensure_node(user)
 
     if setup_only:
-        print("Setup complete. Run test/combinedTest.py to start the service.")
+        print("Setup complete. Run run.py to start the service.")
         return 0
 
     return _start_service()
