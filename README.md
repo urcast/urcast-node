@@ -147,7 +147,7 @@ The setup script will:
 
 - check the saved JWT with `GET /api/auth/me`;
 - ask whether to log in or register if no valid login exists;
-- register the node when it is missing;
+- list the nodes on your account and let you pick one or register a new node;
 - save the JWT, account credentials, and node id to `.env`;
 - start the sensor service in the foreground.
 
@@ -202,7 +202,7 @@ The script:
 3. If the token is missing or expired, asks whether to log in, register, or quit.
 4. On login, validates the email and password, then writes `URCAST_EMAIL`, `URCAST_PASSWORD`, and `URCAST_NODE_TOKEN` to `.env`.
 5. On registration, validates the username, email, and password, creates the account with `POST /api/user`, then logs in and saves the same values.
-6. Checks `URCAST_NODE_ID`; if it is missing or owned by another account, asks for the node name, location, and optional coordinates, then creates it with `POST /api/node`.
+6. Calls `GET /api/nodes` and lists the nodes owned by your account as `<node_id> (<node_name>)`. You can pick one of them, or enter `n` to register a new node. For a new node it asks for the node name, location, and optional coordinates, then creates it with `POST /api/node`.
 7. Saves `URCAST_NODE_ID` and the node details to `.env`.
 8. Starts `run.py`.
 
@@ -250,6 +250,7 @@ The API endpoints used are:
 - `POST /api/user` with `username`, `email`, `password`
 - `POST /api/auth/login` with `email`, `password`; returns `access_token`
 - `GET /api/auth/me` with `Authorization: Bearer <token>`
+- `GET /api/nodes` (all nodes; the setup script keeps only the ones owned by your account)
 - `POST /api/node` with `Authorization: Bearer <token>` and `node_name`, `location_name`, `latitude`, and `longitude`
 
 ### MQTT topics

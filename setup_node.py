@@ -251,28 +251,95 @@ def _ensure_authenticated():
         print("The API rejected the new token. Please try again.")
 
 
-def _ensure_node(user):
-    node_id = _configured_node_id()
-    if node_id is not None:
+def _load_user_nodes(user):
+    try:
+        nodes = auth_client.list_nodes(config.get_str("URCAST_NODE_TOKEN"))
+    except auth_client.ApiError as error:
+        print(f"Could not load existing nodes: {error}")
+        return None
+
+    user_id = user.get("user_id")
+    return [node for node in nodes if node.get("user_id") == user_id]
+
+
+def _save_node(node):
+    config.save(
+        {
+            "URCAST_NODE_ID": node.get("node_id"),
+            "URCAST_NODE_NAME": node.get("node_name"),
+            "URCAST_NODE_LOCATION": node.get("location_name"),
+            "URCAST_NODE_LATITUDE": node.get("latitude"),
+            "URCAST_NODE_LONGITUDE": node.get("longitude"),
+        }
+    )
+
+
+def _ask_node_choice(nodes, default_id):
+    ids = [node.get("node_id") for node in nodes]
+    print("Nodes on your account:")
+    for node in nodes:
+        print(f"  {node.get('node_id')} ({node.get('node_name')})")
+
+    while True:
+        shown_default = f" [{default_id}]" if default_id is not None else ""
+        raw = input(
+            f"Node id to use{shown_default}, or 'n' for a new node: "
+        ).strip().lower()
+        if not raw and default_id is not None:
+            return default_id
+        if raw in ("n", "new"):
+            return None
         try:
-            node = auth_client.get_node(node_id)
+            node_id = int(raw)
+        except ValueError:
+            print("Enter a node id from the list, or 'n' for a new node.")
+            continue
+        if node_id in ids:
+            return node_id
+        print("That node id is not in the list.")
+
+
+def _ensure_node(user):
+    nodes = _load_user_nodes(user)
+    configured_id = _configured_node_id()
+
+    if nodes:
+        ids = [node.get("node_id") for node in nodes]
+        default_id = configured_id if configured_id in ids else ids[0]
+        choice = _ask_node_choice(nodes, default_id)
+        if choice is not None:
+            node = next(node for node in nodes if node.get("node_id") == choice)
+            _save_node(node)
+            print(f"Using existing node {choice} ({node.get('node_name')}).")
+            return choice
+    elif configured_id is not None:
+        # The node list was unavailable or empty; fall back to the saved id.
+        try:
+            node = auth_client.get_node(configured_id)
         except auth_client.ApiError as error:
             if error.status == 404:
-                print(f"Node {node_id} does not exist; registering a new node.")
+                print(f"Node {configured_id} does not exist; registering a new node.")
             else:
-                print(f"Could not check node {node_id}: {error}")
+                print(f"Could not check node {configured_id}: {error}")
                 raise SystemExit(1) from error
         else:
             if node and node.get("user_id") == user.get("user_id"):
-                print(f"Using existing node {node_id} ({node.get('node_name')}).")
-                return node_id
+                print(
+                    f"Using existing node {configured_id} "
+                    f"({node.get('node_name')})."
+                )
+                return configured_id
             if node:
                 print(
-                    f"Node {node_id} belongs to a different account; "
+                    f"Node {configured_id} belongs to a different account; "
                     "registering a new node."
                 )
             else:
-                print(f"Could not load node {node_id}; registering a new node.")
+                print(f"Could not load node {configured_id}; registering a new node.")
+    elif nodes is not None:
+        print("No nodes found on your account; registering a new node.")
+    else:
+        print("Registering a new node.")
 
     node_name_default = config.get_str("URCAST_NODE_NAME", config.DEFAULT_NODE_NAME)
     node_name = _ask(
@@ -344,6 +411,9 @@ def _ensure_node(user):
 
 def _start_service():
     script = Path(__file__).resolve().with_name("run.py")
+    if not script.exists():
+        print(f"Could not find {script.name} next to setup_node.py.")
+        return 1
     print("Starting the sensor service. Press Ctrl+C to stop.")
     try:
         result = subprocess.run(
@@ -377,6 +447,6 @@ if __name__ == "__main__":
     except config.ConfigError as error:
         print(f"Configuration error: {error}")
         sys.exit(1)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print("\nCancelled.")
         sys.exit(1)
