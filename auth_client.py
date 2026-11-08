@@ -132,6 +132,13 @@ def get_node(node_id):
     return data
 
 
+def list_nodes(token=None):
+    _, data = _request_json("GET", f"{api_url()}/api/nodes", token=token)
+    if not isinstance(data, list):
+        return []
+    return [node for node in data if isinstance(node, dict)]
+
+
 def check_authentication(token=None):
     token = token or config.get_str("URCAST_NODE_TOKEN")
     if not token or token == PLACEHOLDER_TOKEN:
