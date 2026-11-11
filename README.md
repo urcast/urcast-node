@@ -63,6 +63,8 @@ urcast-node/
 ├── .gitignore            # Keeps .env and local Python files out of git
 ├── requirements.txt      # Python dependencies for the node
 │
+├── install.sh            # Installs and enables the systemd service
+├── start.sh              # Activates the venv and runs run.py (used by systemd)
 ├── config.py             # Loads and saves the central .env values
 ├── auth_client.py        # Login, registration, auth checks, and JWT refresh
 ├── setup_node.py         # Interactive first-run setup and service launcher
@@ -158,23 +160,75 @@ python setup_node.py --setup-only
 
 `.env` is created with owner-only permissions and is ignored by git. Keep it private: it contains the account password and node JWT.
 
+6. Install the service so the node runs on boot, without an SSH session:
+
+Stop the foreground copy first: `setup_node.py` starts `run.py` in the terminal, so press `Ctrl+C` once it has printed at least one `sent reading` line, or provision with `python setup_node.py --setup-only` so it never starts. Leaving it running and installing anyway would give you two publishers for the same node.
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+`install.sh` detects the absolute path of your clone (whatever user, folder, or home directory you chose), writes `/etc/systemd/system/urcast.service` with that path and your account, reloads systemd, enables the unit for boot, and starts it. `start.sh` is the service entry point: it enters the repo directory and runs `run.py` with the virtualenv's Python, reading `.env` and the saved JWT. It prompts for nothing and has no terminal, so the node starts sampling at boot before anyone logs in.
+
+```bash
+systemctl status urcast        # check it is running
+journalctl -u urcast -f        # follow live logs
+sudo systemctl restart urcast  # after changing .env or code
+sudo systemctl stop urcast     # pause sampling
+```
+
+Output that used to go to the SSH terminal now goes to the journal, so you can close the session and the node keeps sampling. The installer can be rerun safely: it rewrites the service file with the current path and restarts the unit, so rerun it from the new location if you move the repository.
+
+To confirm the boot behavior, reboot with no SSH session open and check afterwards:
+
+```bash
+sudo reboot
+# once the Pi is back:
+systemctl is-enabled urcast
+systemctl is-active urcast
+journalctl -u urcast -n 20
+```
+
+`is-enabled` should print `enabled`, `is-active` should print `active`, and the journal should show samples with recent timestamps and no prompts. `.env` and the JWT are read without user input, so the same applies after a power cut.
+
+If you re-provision the account or node later, stop the service first, then rerun setup and start it again:
+
+```bash
+sudo systemctl stop urcast
+python setup_node.py --setup-only
+sudo systemctl start urcast
+```
+
 ---
 
 ## Running and Testing
 
-The recommended entry point is the setup script, which also starts the service:
+On a provisioned Pi the normal way to run the node is the systemd service, which starts at boot and does not need an SSH session:
+
+```bash
+systemctl status urcast
+journalctl -u urcast -f
+```
+
+For a one-off foreground run (debugging, or before the service is installed), the setup script can provision and start the node in the current terminal:
 
 ```bash
 python setup_node.py
 ```
 
-After `.env` is configured, the sensor loop can also be started directly:
+After `.env` is configured, the sensor loop can also be started directly with the venv active or through the wrapper script used by systemd:
 
 ```bash
+source venv/bin/activate
 python run.py
 ```
 
-Press `Ctrl+C` at any time to safely terminate the execution loop and release hardware interfaces.
+```bash
+./start.sh
+```
+
+Press `Ctrl+C` at any time to safely terminate the execution loop and release hardware interfaces. Do not run a manual copy while `urcast.service` is active: both would publish readings for the same node.
 
 ---
 
@@ -279,6 +333,10 @@ Sensor failures are sent as `null` (or omitted) rather than a made-up value, and
 | `could not send reading (TLS connection to broker failed)` | Check `URCAST_MQTT_BROKER` (must be `urcast.pjmisev.com`, kept as a grey-cloud DNS record) and that Mosquitto is listening with TLS on `URCAST_MQTT_PORT` (8883). |
 | Nothing arrives after 24 hours | Check that `URCAST_EMAIL` and `URCAST_PASSWORD` are still valid; the node refreshes the JWT one hour before expiry. |
 | `URCAST_NODE_TOKEN` or `URCAST_NODE_ID` missing from `.env` | Run `setup_node.py` again. It reuses existing values and fills in missing ones. |
+| `urcast.service` fails with `status=203/EXEC` | The service file points at a missing path or `start.sh` is not executable. Rerun `./install.sh` from the current repository location. |
+| `urcast.service` restarts every 10 seconds | Check `journalctl -u urcast -n 50`. Usually `venv/` is missing, dependencies are not installed in it, or `.env` was never created. |
+| Service starts but every sensor reports `n/a` or `init failed` | GPIO permissions. Confirm the service user is in the `gpio` group, then `sudo systemctl restart urcast`. |
+| Readings stop after closing the SSH session | They should not. If they do, the node was started by hand instead of by `urcast.service`; check `systemctl is-enabled urcast` and `systemctl is-active urcast`. |
 
 ---
 
