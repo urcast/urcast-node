@@ -1,0 +1,44 @@
+name: urcast-node
+
+# Production stack: the node runs as a container on the Raspberry Pi 5 with the
+# TSL2591, BMP280 and DHT22 wired to it.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# The container keeps running after the SSH session closes and comes back on
+# boot because the docker service is enabled and the restart policy is
+# unless-stopped.
+#
+# Hardware access:
+#   * /dev/i2c-1 is the hardware I2C bus used by the TSL2591;
+#   * the BMP280 (software I2C) and the DHT22 use GPIO lines on a gpiochip
+#     node, which is /dev/gpiochip0 on current Pi 5 kernels and was
+#     /dev/gpiochip4 on older ones. Check with: ls /dev/gpiochip*
+#     Override with NODE_GPIO_CHIP=/dev/gpiochip4 when needed.
+#   * GPIO_GID and I2C_GID default to the Raspberry Pi OS group ids. Check with
+#     getent group gpio i2c.
+#
+# The image runs as uid/gid 1000 by default so it can write the bind-mounted
+# .env when the node refreshes its JWT. Override NODE_UID/NODE_GID when your
+# Pi user has different ids (see: id -u, id -g).
+
+services:
+  node:
+    build: .
+    image: urcast-node:latest
+    restart: unless-stopped
+    user: "${NODE_UID:-1000}:${NODE_GID:-1000}"
+    group_add:
+      - "${GPIO_GID:-986}"
+      - "${I2C_GID:-997}"
+    devices:
+      - /dev/i2c-1
+      - "${NODE_GPIO_CHIP:-/dev/gpiochip0}"
+    volumes:
+      - ./.env:/app/.env
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
