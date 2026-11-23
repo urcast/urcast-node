@@ -1,5 +1,9 @@
 # Local secrets and runtime state
 .env
+# Staging files config.save() writes next to .env, left behind only if the
+# process is killed mid-write. They contain the same secrets as .env.
+.env.*
+!.env.example
 
 # Python
 __pycache__/
