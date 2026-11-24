@@ -1,0 +1,18 @@
+name: urcast-node
+
+# Local stack: builds and runs the node image without any Raspberry Pi
+# hardware. Every sensor read fails soft, so this exercises the loop, the JWT
+# refresh and the MQTT publish path on a laptop or on the Pi before the wiring
+# is done.
+#
+#   docker compose up --build
+#
+# With the sensors attached on the Pi, use docker-compose.prod.yml instead.
+
+services:
+  node:
+    build: .
+    image: urcast-node:local
+    restart: "no"
+    volumes:
+      - ./.env:/app/.env

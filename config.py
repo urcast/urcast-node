@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import tempfile
 from pathlib import Path
 
 try:
@@ -136,10 +137,26 @@ def ensure_env_file() -> Path:
 def save(values: dict[str, object]) -> None:
     """Persist values to the central .env and update the current process."""
     ensure_env_file()
-    for name, value in values.items():
-        text = "" if value is None else str(value)
-        set_key(str(ENV_PATH), name, text)
-        os.environ[name] = text
+    descriptor, staging_name = tempfile.mkstemp(
+        prefix=f".{ENV_PATH.name}.",
+        dir=str(ENV_PATH.parent),
+    )
+    os.close(descriptor)
+    staging = Path(staging_name)
+    try:
+        # Let python-dotenv do the formatting on a scratch copy, then write the
+        # bytes back into the real file instead of renaming over it: inside a
+        # container .env is a bind mount and rename(2) onto a mount point fails
+        # with EBUSY, which used to break the automatic JWT refresh.
+        shutil.copyfile(ENV_PATH, staging)
+        for name, value in values.items():
+            text = "" if value is None else str(value)
+            set_key(str(staging), name, text)
+            os.environ[name] = text
+        with staging.open("rb") as source, ENV_PATH.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
+    finally:
+        staging.unlink(missing_ok=True)
     _restrict_permissions()
 
 

@@ -59,6 +59,7 @@
 #   - DATA -> Pin 7  (GPIO 4)
 #   - GND  -> Pin 14 (Ground)
 
+import signal
 import time
 from datetime import datetime, timezone
 
@@ -196,7 +197,15 @@ def print_sample(ts, seq, light, air, press):
     print()
 
 
+def _request_stop(signum, frame):
+    # docker stop and systemctl stop ask politely with SIGTERM. Turn that into
+    # the same clean exit as Ctrl+C so the buses, the DHT sensor and the MQTT
+    # connection are released instead of the process being killed outright.
+    raise KeyboardInterrupt
+
+
 def main():
+    signal.signal(signal.SIGTERM, _request_stop)
     i2c_hw, i2c_sw, tsl, bmp, dht = init_sensors()
 
     print("Press Ctrl+C to stop.\n")

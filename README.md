@@ -50,6 +50,7 @@ The node focuses strictly on raw data collection to keep edge operations simple 
 - **Peripheral Libraries:** Adafruit CircuitPython (`board`, `busio`, `bitbangio`, `adafruit_tsl2591`, `adafruit_bmp280`, `adafruit_dht`) with `gpiod` as the Raspberry Pi 5 GPIO backend
 - **Network Libraries:** `paho-mqtt` (MQTT publishing), `urllib` (REST login, registration, and auth checks)
 - **Configuration:** `python-dotenv` (loads the central `.env`)
+- **Containers:** Docker and Docker Compose (multi-stage image, non-root runtime, device passthrough for the sensors)
 - **Runtime Utilities:** `getpass` (password prompts), `time`, `datetime` (UTC-enforced timestamping)
 
 ---
@@ -61,7 +62,12 @@ urcast-node/
 │
 ├── .env.example          # Template for the central .env configuration
 ├── .gitignore            # Keeps .env and local Python files out of git
+├── .dockerignore         # Keeps .env, venv and caches out of the image build
 ├── requirements.txt      # Python dependencies for the node
+│
+├── Dockerfile            # Multi-stage image with a prebuilt virtualenv
+├── docker-compose.yml    # Local container run, no sensor hardware
+├── docker-compose.prod.yml # Pi container with gpio/i2c passthrough
 │
 ├── install.sh            # Installs and enables the systemd service
 ├── start.sh              # Activates the venv and runs run.py (used by systemd)
@@ -93,11 +99,84 @@ You can inspect the complete evolution of the individual sensor scripts and diag
 ### Prerequisites
 
 - A Raspberry Pi 5 running Raspberry Pi OS with I2C interfaces enabled via `sudo raspi-config`.
-- Python 3.10 or newer.
 - Physical wiring of the TSL2591, BMP280, and DHT22 modules according to the hardware stack pinout table above.
 - Access to the urcast API and MQTT broker. Their addresses go in the central `.env` file.
+- For the Docker path: Docker Engine with the Compose plugin (`docker compose version`).
+- For the systemd path: Python 3.10 or newer and a virtualenv.
 
 ### Setup Instructions
+
+Both options provision the same account, node and `.env`. Pick one and keep it: running the container and `urcast.service` at the same time makes the node publish two readings per interval.
+
+#### Option 1: Docker Compose (recommended)
+
+The node runs as a single container built from this repository. Python and the virtualenv live inside the image, and Docker starts the container on boot, so nothing has to stay in an SSH session.
+
+1. Clone the repository and create `.env`:
+```bash
+git clone https://github.com/urcast/urcast-node
+cd urcast-node
+cp .env.example .env
+```
+
+2. Build the image:
+```bash
+docker compose -f docker-compose.prod.yml build
+```
+
+3. Provision the account and node from inside the container. This step is interactive, so run it in a terminal rather than detached; `--setup-only` stops before starting the sensor loop:
+```bash
+docker compose run --rm node python setup_node.py --setup-only
+```
+It writes `URCAST_NODE_TOKEN`, the account credentials and `URCAST_NODE_ID` into `.env` on the host, because `.env` is bind-mounted into the container. It uses `docker-compose.yml`, which needs no hardware, so it works before the sensors are wired; run it once per node.
+
+4. Start the node in the background:
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+This is the only start you need: from here on the Docker service launches the container at boot, with no SSH session and nobody logged in.
+
+5. Check that it is running and sampling:
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f node
+```
+The logs show the same sample blocks as the terminal version, plus the `sent reading` lines.
+
+The image is built in two stages: dependencies are installed into a virtualenv in the build stage and copied into the runtime stage, which runs as the non-root `node` user (uid 1000). `.dockerignore` keeps `.env`, `venv/` and local caches out of the build context.
+
+The node only makes outbound connections (HTTPS to the API, MQTT over TLS to the broker), so the container publishes no ports and stays on the default bridge network with Docker's embedded DNS. Nothing on the Pi needs to reach it. There is no container healthcheck for the same reason: the node has no HTTP surface, so `docker compose ... logs` is what shows that samples are arriving.
+
+Hardware access is the only difference between the two compose files. `docker-compose.prod.yml` passes `/dev/i2c-1` and a gpiochip node into the container and adds the `gpio` and `i2c` group ids. Check what your kernel exposes:
+
+```bash
+ls /dev/gpiochip*        # gpiochip0 on current Pi 5 kernels, gpiochip4 on older ones
+getent group gpio i2c    # usually gpio 986, i2c 997
+```
+
+The Raspberry Pi OS defaults are already in the file. If your chips or group ids differ, set `NODE_GPIO_CHIP`, `GPIO_GID` or `I2C_GID` (in the environment or in `.env`) before starting. The container rewrites `.env` when it refreshes the JWT, so it runs as uid/gid 1000 by default; if your Pi user has different ids, set `NODE_UID` and `NODE_GID` to the output of `id -u` and `id -g`.
+
+Useful commands:
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f node    # follow the samples
+docker compose -f docker-compose.prod.yml restart node    # after editing .env
+docker compose -f docker-compose.prod.yml down            # stop; image and .env stay
+docker compose -f docker-compose.prod.yml up -d --build   # rebuild after git pull
+```
+
+`docker-compose.yml` (run as `docker compose up --build`, without `-f docker-compose.prod.yml`) builds the same image without hardware access. Every sensor read fails soft, so the loop, the JWT refresh and the MQTT publish path can be tested on a laptop or on the Pi before the sensors are wired; readings are sent with `null` sensor fields.
+
+Boot behavior comes from Docker itself: the `docker` service is enabled by the package, and `restart: unless-stopped` brings the container back after a reboot or power cut. Verify with no SSH session open:
+
+```bash
+sudo reboot
+# once the Pi is back:
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail 20 node
+```
+
+#### Option 2: systemd service (no Docker)
 
 1. Clone or download this repository to your Raspberry Pi 5:
 ```bash
@@ -205,14 +284,24 @@ sudo systemctl start urcast
 
 ## Running and Testing
 
-On a provisioned Pi the normal way to run the node is the systemd service, which starts at boot and does not need an SSH session:
+On a provisioned Pi the node normally starts at boot and does not need an SSH session. Use whichever option was installed.
+
+With Docker:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f node
+docker compose -f docker-compose.prod.yml restart node
+```
+
+With the systemd service:
 
 ```bash
 systemctl status urcast
 journalctl -u urcast -f
 ```
 
-For a one-off foreground run (debugging, or before the service is installed), the setup script can provision and start the node in the current terminal:
+For a one-off foreground run from a host install (debugging, or before the systemd service is installed), the setup script can provision and start the node in the current terminal:
 
 ```bash
 python setup_node.py
@@ -229,7 +318,9 @@ python run.py
 ./start.sh
 ```
 
-Press `Ctrl+C` at any time to safely terminate the execution loop and release hardware interfaces. Do not run a manual copy while `urcast.service` is active: both would publish readings for the same node.
+The container equivalent is `docker compose -f docker-compose.prod.yml up`, which logs to the terminal until you press `Ctrl+C`.
+
+Press `Ctrl+C` at any time to safely terminate the execution loop and release hardware interfaces. Do not run a manual copy while `urcast.service` or the container is active: both would publish readings for the same node.
 
 ---
 
@@ -338,6 +429,13 @@ Sensor failures are sent as `null` (or omitted) rather than a made-up value, and
 | `urcast.service` restarts every 10 seconds | Check `journalctl -u urcast -n 50`. Usually `venv/` is missing, dependencies are not installed in it, or `.env` was never created. |
 | Service starts but every sensor reports `n/a` or `init failed` | GPIO permissions. Confirm the service user is in the `gpio` group, then `sudo systemctl restart urcast`. |
 | Readings stop after closing the SSH session | They should not. If they do, the node was started by hand instead of by `urcast.service`; check `systemctl is-enabled urcast` and `systemctl is-active urcast`. |
+| Container starts but the sensors report `n/a` | The devices were not passed in. Use `docker-compose.prod.yml` on the Pi; `docker-compose.yml` deliberately runs without hardware. |
+| `docker compose` fails with `error gathering device information ... no such file or directory` | The gpiochip node differs from the default. Check `ls /dev/gpiochip*` and set `NODE_GPIO_CHIP=/dev/gpiochip4` (or the node you have) before starting. |
+| Container logs `Permission denied` opening a gpiochip or `/dev/i2c-1` | The group ids are not right. Run `getent group gpio i2c`, set `GPIO_GID` and `I2C_GID` to match, then `docker compose -f docker-compose.prod.yml up -d`. |
+| Container restarts every few seconds | Check `docker compose -f docker-compose.prod.yml logs --tail 50 node`. Usually `.env` is missing on the host, the image predates a code change (`up -d --build`), or I2C is not enabled in `raspi-config`. |
+| `could not send reading: ... Permission denied: '/app/.env'` | The container user cannot write the bind-mounted `.env`, so the JWT refresh fails. Set `NODE_UID` and `NODE_GID` to your host `id -u` and `id -g`, then recreate the container. |
+| `docker compose` prints `no configuration file provided` | Run it from the repository root, or pass an absolute path with `-f`. |
+| The first build takes several minutes on the Pi | Expected: the builder stage downloads arm64 wheels for Blinka, gpiod and paho-mqtt. Later builds reuse the cached dependency layer. |
 
 ---
 
