@@ -429,6 +429,13 @@ Sensor failures are sent as `null` (or omitted) rather than a made-up value, and
 | `urcast.service` restarts every 10 seconds | Check `journalctl -u urcast -n 50`. Usually `venv/` is missing, dependencies are not installed in it, or `.env` was never created. |
 | Service starts but every sensor reports `n/a` or `init failed` | GPIO permissions. Confirm the service user is in the `gpio` group, then `sudo systemctl restart urcast`. |
 | Readings stop after closing the SSH session | They should not. If they do, the node was started by hand instead of by `urcast.service`; check `systemctl is-enabled urcast` and `systemctl is-active urcast`. |
+| Container starts but the sensors report `n/a` | The devices were not passed in. Use `docker-compose.prod.yml` on the Pi; `docker-compose.yml` deliberately runs without hardware. |
+| `docker compose` fails with `error gathering device information ... no such file or directory` | The gpiochip node differs from the default. Check `ls /dev/gpiochip*` and set `NODE_GPIO_CHIP=/dev/gpiochip4` (or the node you have) before starting. |
+| Container logs `Permission denied` opening a gpiochip or `/dev/i2c-1` | The group ids are not right. Run `getent group gpio i2c`, set `GPIO_GID` and `I2C_GID` to match, then `docker compose -f docker-compose.prod.yml up -d`. |
+| Container restarts every few seconds | Check `docker compose -f docker-compose.prod.yml logs --tail 50 node`. Usually `.env` is missing on the host, the image predates a code change (`up -d --build`), or I2C is not enabled in `raspi-config`. |
+| `could not send reading: ... Permission denied: '/app/.env'` | The container user cannot write the bind-mounted `.env`, so the JWT refresh fails. Set `NODE_UID` and `NODE_GID` to your host `id -u` and `id -g`, then recreate the container. |
+| `docker compose` prints `no configuration file provided` | Run it from the repository root, or pass an absolute path with `-f`. |
+| The first build takes several minutes on the Pi | Expected: the builder stage downloads arm64 wheels for Blinka, gpiod and paho-mqtt. Later builds reuse the cached dependency layer. |
 
 ---
 
